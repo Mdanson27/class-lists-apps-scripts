@@ -18,10 +18,10 @@
 /** ==================== SETTINGS ==================== */
 /**
  * Restoration policy:
- * NEVER delete Leavers–Debtors rows. Restored students are marked Reinstated
- * so movement history is preserved and can be audited later.
+ * Restoring a student is a MOVE, never a copy. After the class write is
+ * verified, the matching row is deleted from Leavers – Debtors.
  */
-const LEAVERS_RESTORE_BEHAVIOR = "MARK";
+const LEAVERS_RESTORE_BEHAVIOR = "DELETE";
 
 /**
  * FIXED TOTALS ROWS (AUTHORITATIVE)
@@ -710,26 +710,98 @@ function restoreLeaverToClass() {
   if (iPAID !== null) row[iPAID] = 0;
 
   writeRange.setValues([row]);
+SpreadsheetApp.flush();
 
-  // Always pass the canonical live sheet name; never a user-typed casing variant.
-  _rebuildOneDefaultersSafe_(to.getName());
+// Verify the student was actually written into the target class before
+// touching the debtor record.
+const writtenName = iNAME !== null
+  ? _flatUpper_(to.getRange(writeRow, iNAME + 1).getDisplayValue())
+  : "";
 
-  // Debtor record handling
-  const absDebtRow = 2 + dIdx;
-  const now = nowStamp_();
+if (writtenName !== nameU) {
+  _clearStudentRowSafely_(to, writeRow);
+  SpreadsheetApp.flush();
+  return ui.alert(
+    `Restore stopped: ${nameInput} could not be verified in ${to.getName()}.\n\n` +
+    `The Leavers – Debtors record was NOT removed.`
+  );
+}
 
-  // NEVER delete the Leavers/Debtors history row. Mark it as reinstated instead.
-  const setDebtor = (h, v) => {
-    const c = ctx.map[_flatUpper_(h)];
-    if (c) ctx.sh.getRange(absDebtRow, c).setValue(v);
-  };
-  setDebtor(CL.H.BAL, 0);
-  setDebtor("Status", "Reinstated");
-  setDebtor("Reinstated To", to.getName());
-  setDebtor("Reinstated At", now);
-  setDebtor("Updated At", now);
+// Rebuild Defaulters before completing the move. If this fails, roll back
+// the class write so the student remains only in Leavers – Debtors.
+try {
+  if (typeof rebuildOneDefaulters === "function") {
+    rebuildOneDefaulters(to.getName());
+  }
+} catch (err) {
+  _clearStudentRowSafely_(to, writeRow);
+  SpreadsheetApp.flush();
+  return ui.alert(
+    `Restore stopped because Defaulters could not be rebuilt.\n\n` +
+    `${err && err.message ? err.message : err}\n\n` +
+    `The class write was rolled back and the debtor record was kept.`
+  );
+}
 
-  _toast_(`Restored ${nameInput} to ${to.getName()}.`, "Leavers – Debtors", 6);
+// Re-check the exact debtor record immediately before deletion. Prefer the
+// immutable Student ID; fall back to Student Name for older imported rows.
+const absDebtRow = 2 + dIdx;
+const debtNameCol = ctx.map[_flatUpper_(CL.H.NAME)];
+const debtIdCol = ctx.map[_flatUpper_("Student ID")];
+const expectedStudentId = _norm_(_getDebtor_(ctx, d, "Student ID"));
+const liveDebtName = debtNameCol
+  ? _flatUpper_(ctx.sh.getRange(absDebtRow, debtNameCol).getDisplayValue())
+  : "";
+const liveStudentId = debtIdCol
+  ? _norm_(ctx.sh.getRange(absDebtRow, debtIdCol).getDisplayValue())
+  : "";
+
+const sameDebtorRecord = expectedStudentId
+  ? liveStudentId === expectedStudentId
+  : liveDebtName === nameU;
+
+if (!sameDebtorRecord) {
+  _clearStudentRowSafely_(to, writeRow);
+  try {
+    if (typeof rebuildOneDefaulters === "function") rebuildOneDefaulters(to.getName());
+  } catch (_) {}
+  SpreadsheetApp.flush();
+  return ui.alert(
+    `Restore stopped: the Leavers – Debtors row changed before deletion.\n\n` +
+    `The class write was rolled back so the student cannot exist in both places.`
+  );
+}
+
+// COMPLETE THE MOVE: remove the source debtor row. If deletion fails for any
+// reason, roll back the class write to preserve the one-place-only rule.
+try {
+  ctx.sh.deleteRow(absDebtRow);
+  SpreadsheetApp.flush();
+} catch (err) {
+  _clearStudentRowSafely_(to, writeRow);
+  try {
+    if (typeof rebuildOneDefaulters === "function") rebuildOneDefaulters(to.getName());
+  } catch (_) {}
+  SpreadsheetApp.flush();
+  return ui.alert(
+    `Restore stopped because the debtor row could not be removed.\n\n` +
+    `${err && err.message ? err.message : err}\n\n` +
+    `The class write was rolled back, so there is no duplicate.`
+  );
+}
+
+// Keep the class-by-class debtor report current after the source row is gone.
+try {
+  if (typeof rebuildLeaversByClassReport === "function") {
+    rebuildLeaversByClassReport();
+  }
+} catch (_) {}
+
+_toast_(
+  `Restored ${nameInput} to ${to.getName()} and removed the Debtors record.`,
+  "Leavers – Debtors",
+  6
+);
 }
 
 function markLeaverSettled() {
