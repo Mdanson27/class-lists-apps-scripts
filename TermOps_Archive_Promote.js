@@ -844,8 +844,12 @@ function TOPS_step3_Promote_(st) {
         st.stats.graduates = (st.stats.graduates || 0) + cleared.length;
       }
 
-      // Clear Senior 6 students (keep totals row)
-      from.deleteRows(2, num);
+      // SAFE MOVE: clear student contents only. NEVER delete class-list rows.
+      // The students have already been copied to Leavers/Graduates above.
+      // clearContent() preserves the physical row structure, formatting and TOTALS position.
+      if (num > 0) {
+        from.getRange(2, 1, num, from.getLastColumn()).clearContent();
+      }
 
       promotedTotal += data.length;
       st.stats.promoted = (st.stats.promoted || 0) + data.length;
@@ -864,8 +868,11 @@ function TOPS_step3_Promote_(st) {
 
     TOPS_appendRowsAboveTotals_(to, mapped);
 
-    // Clear source students (keep totals row)
-    from.deleteRows(2, num);
+    // SAFE MOVE: clear source student contents only. NEVER delete class-list rows.
+    // Students were copied to the destination class above.
+    if (num > 0) {
+      from.getRange(2, 1, num, from.getLastColumn()).clearContent();
+    }
 
     promotedTotal += data.length;
     st.stats.promoted = (st.stats.promoted || 0) + data.length;

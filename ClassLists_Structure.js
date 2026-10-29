@@ -264,8 +264,13 @@ function trimBelowTotals_One(shOrName) {
   const tRow = (typeof findTotalsRowWide_ === "function") ? findTotalsRowWide_(sh) : null;
   if (!tRow) return;
 
+  // NEVER delete physical rows from class sheets.
+  // Rows below TOTALS may be reused later; leave the grid structure intact.
   const extra = sh.getMaxRows() - tRow;
-  if (extra > 0) sh.deleteRows(tRow + 1, extra);
+  if (extra > 0) {
+    const lastCol = Math.max(1, sh.getLastColumn());
+    sh.getRange(tRow + 1, 1, extra, lastCol).clearContent();
+  }
 }
 
 function trimBelowTotals_All() {

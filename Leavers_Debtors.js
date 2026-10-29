@@ -17,11 +17,11 @@
 
 /** ==================== SETTINGS ==================== */
 /**
- * After restoring a debtor to class:
- *  - "DELETE": remove the row from Leavers–Debtors (recommended)
- *  - "MARK"  : keep row, mark Reinstated and set BALANCE=0
+ * Restoration policy:
+ * NEVER delete Leavers–Debtors rows. Restored students are marked Reinstated
+ * so movement history is preserved and can be audited later.
  */
-const LEAVERS_RESTORE_BEHAVIOR = "DELETE"; // <-- change to "MARK" if you prefer history kept
+const LEAVERS_RESTORE_BEHAVIOR = "MARK";
 
 /**
  * FIXED TOTALS ROWS (AUTHORITATIVE)
@@ -118,20 +118,24 @@ function _lastHeaderCol_(sh) {
   return end;
 }
 
-/** Totals row for a class sheet (prefer your fixed map, else fallback to scan) */
+/** Totals row for a class sheet.
+ * SAFETY: detect the ACTUAL TOTALS label in the live sheet; never trust a stale fixed row.
+ */
 function _totalsRowForClass_(sh) {
-  const name = sh.getName();
-  const fixed = Number(CLASS_TOTALS_ROWS[name]);
-  if (Number.isFinite(fixed) && fixed >= 2) return fixed;
-
-  // Fallback: try Utils (manual/bottom-up in your updated project), else local scan
-  try { if (typeof findTotalsRowWide_ === "function") return findTotalsRowWide_(sh, 12); } catch (_) {}
+  // Prefer the shared helper after its safety fix.
+  try {
+    if (typeof findTotalsRowWide_ === "function") {
+      const found = findTotalsRowWide_(sh, 12);
+      if (found) return found;
+    }
+  } catch (_) {}
 
   const last = Math.min(sh.getLastRow(), 4000);
   if (last < 2) return null;
   const width = Math.min(12, Math.max(1, sh.getLastColumn()));
   const vals = sh.getRange(1, 1, last, width).getValues();
 
+  // Bottom-up so the real final TOTALS row wins if old labels exist higher up.
   for (let r = vals.length - 1; r >= 0; r--) {
     for (let c = 0; c < width; c++) {
       const flat = _flatUpper_(vals[r][c]);
@@ -601,9 +605,11 @@ function restoreLeaverToClass() {
   for (let i = 0; i < ctx.rows.length; i++) {
     const nm = _flatUpper_(_getDebtor_(ctx, ctx.rows[i], CL.H.NAME));
     const st = _flatUpper_(_getDebtor_(ctx, ctx.rows[i], "Status"));
-    if (nm === nameU && st !== "SETTLED" && st !== "REINSTATED") matches.push(i);
+    // Allow restoration whether the outstanding balance is positive OR zero.
+    // Only records already restored to a class are excluded.
+    if (nm === nameU && st !== "REINSTATED") matches.push(i);
   }
-  if (!matches.length) return ui.alert("No unsettled debtor record found for that name.");
+  if (!matches.length) return ui.alert("No restorable Leavers/Debtors record found for that name.");
 
   let dIdx = matches[0];
   if (matches.length > 1) {
@@ -709,19 +715,16 @@ function restoreLeaverToClass() {
   const absDebtRow = 2 + dIdx;
   const now = nowStamp_();
 
-  if (LEAVERS_RESTORE_BEHAVIOR === "DELETE") {
-    ctx.sh.deleteRow(absDebtRow);
-  } else {
-    const setDebtor = (h, v) => {
-      const c = ctx.map[_flatUpper_(h)];
-      if (c) ctx.sh.getRange(absDebtRow, c).setValue(v);
-    };
-    setDebtor(CL.H.BAL, 0);
-    setDebtor("Status", "Reinstated");
-    setDebtor("Reinstated To", targetClass);
-    setDebtor("Reinstated At", now);
-    setDebtor("Updated At", now);
-  }
+  // NEVER delete the Leavers/Debtors history row. Mark it as reinstated instead.
+  const setDebtor = (h, v) => {
+    const c = ctx.map[_flatUpper_(h)];
+    if (c) ctx.sh.getRange(absDebtRow, c).setValue(v);
+  };
+  setDebtor(CL.H.BAL, 0);
+  setDebtor("Status", "Reinstated");
+  setDebtor("Reinstated To", targetClass);
+  setDebtor("Reinstated At", now);
+  setDebtor("Updated At", now);
 
   _toast_(`Restored ${nameInput} to ${targetClass}.`, "Leavers – Debtors", 6);
 }

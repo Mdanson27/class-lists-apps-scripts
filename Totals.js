@@ -487,12 +487,15 @@ function fixTotalsFormattingAll_(opt) {
   TOTS_toast_("Format fix complete.", "Format Fix", 6);
 }
 
-/** Fallback: delete rows below TOTALS */
+/** Fallback: clear contents below TOTALS without deleting physical rows. */
 function TOTS_trimBelowTotalsFallback_(sh) {
   const tRow = TOTS_findTotalsRowSmart_(sh);
   if (!tRow) return;
   const extra = sh.getMaxRows() - tRow;
-  if (extra > 0) sh.deleteRows(tRow + 1, extra);
+  if (extra > 0) {
+    const lastCol = Math.max(1, sh.getLastColumn());
+    sh.getRange(tRow + 1, 1, extra, lastCol).clearContent();
+  }
 }
 
 /* =========================

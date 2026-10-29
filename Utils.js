@@ -162,16 +162,9 @@ function getHeaderIndexMapUpper_(sh) {
  * Totals row detection
  * ========================= */
 
-/** Find TOTALS row by scanning column A (fast). Returns row number or null. */
+/** Find ACTUAL TOTALS row by scanning column A bottom-up. Returns row number or null. */
 function findTotalsRow_(sh) {
   if (!sh) return null;
-
-  // Prefer fixed totals row if configured
-  try {
-    const cfg = CL?.FIXED_TOTALS?.[sh.getName()];
-    const r = Number(cfg?.row);
-    if (Number.isFinite(r) && r >= 2) return r;
-  } catch (_) {}
 
   const lastRow = sh.getLastRow();
   if (lastRow < 2) return null;
@@ -179,22 +172,17 @@ function findTotalsRow_(sh) {
   const maxScan = Math.min(lastRow, 4000);
   const colA = sh.getRange(1, 1, maxScan, 1).getValues();
 
-  for (let r = 0; r < colA.length; r++) {
-    if (_flatUpper_(colA[r][0]) === "TOTALS") return r + 1;
+  // Never trust stale configured row numbers. The live TOTALS label is authoritative.
+  for (let r = colA.length - 1; r >= 0; r--) {
+    const key = _flatUpper_(colA[r][0]);
+    if (key === "TOTALS" || key.startsWith("TOTALS")) return r + 1;
   }
   return null;
 }
 
-/** Find TOTALS row by scanning a wider area (robust). Returns row number or null. */
+/** Find ACTUAL TOTALS row by scanning a wider area bottom-up. Returns row number or null. */
 function findTotalsRowWide_(sh) {
   if (!sh) return null;
-
-  // Prefer fixed totals row if configured
-  try {
-    const cfg = CL?.FIXED_TOTALS?.[sh.getName()];
-    const r = Number(cfg?.row);
-    if (Number.isFinite(r) && r >= 2) return r;
-  } catch (_) {}
 
   const lastRow = sh.getLastRow();
   if (lastRow < 2) return null;
@@ -203,9 +191,11 @@ function findTotalsRowWide_(sh) {
   const scanCols = Math.min(12, Math.max(1, sh.getLastColumn()));
   const vals = sh.getRange(1, 1, scanRows, scanCols).getValues();
 
-  for (let r = 0; r < vals.length; r++) {
+  // Bottom-up handles TOTALS labels that are not in column A (for example Senior 6).
+  for (let r = vals.length - 1; r >= 0; r--) {
     for (let c = 0; c < vals[r].length; c++) {
-      if (_flatUpper_(vals[r][c]) === "TOTALS") return r + 1;
+      const key = _flatUpper_(vals[r][c]);
+      if (key === "TOTALS" || key.startsWith("TOTALS")) return r + 1;
     }
   }
   return null;
