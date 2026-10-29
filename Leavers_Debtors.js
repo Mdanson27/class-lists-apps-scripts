@@ -565,13 +565,14 @@ function recordLeaverQuick() {
   const studentId = Utilities.getUuid();
   const set = (h, v) => { const c = ctx.map[_flatUpper_(h)]; if (c) out[c - 1] = v; };
 
-  set("Former Class", className);
+  const actualClassName = src.getName();
+  set("Former Class", actualClassName);
   set("Date Left", dateLeft);
   set("Exit Reason", exitReason || "");
   set("Status", "Unsettled");
   set("Reinstated To", "");
   set("Reinstated At", "");
-  set("Source Sheet", className);
+  set("Source Sheet", actualClassName);
   set("Source Row", absRow);
   set("Created At", now);
   set("Updated At", now);
@@ -582,7 +583,8 @@ function recordLeaverQuick() {
   const go = ui.alert("Remove from class list?", `Clear "${name}" from "${className}" now?\n\n(ROW WILL NOT BE DELETED — totals row stays fixed)`, ui.ButtonSet.YES_NO);
   if (go === ui.Button.YES) {
     _clearStudentRowSafely_(src, absRow);
-    _rebuildOneDefaultersSafe_(className);
+    // Always pass the canonical live sheet name; never a user-typed casing variant.
+    _rebuildOneDefaultersSafe_(src.getName());
   }
 
   _toast_(`Leaver recorded: ${name}`, "Leavers – Debtors", 6);
@@ -709,7 +711,8 @@ function restoreLeaverToClass() {
 
   writeRange.setValues([row]);
 
-  _rebuildOneDefaultersSafe_(targetClass);
+  // Always pass the canonical live sheet name; never a user-typed casing variant.
+  _rebuildOneDefaultersSafe_(to.getName());
 
   // Debtor record handling
   const absDebtRow = 2 + dIdx;
@@ -722,11 +725,11 @@ function restoreLeaverToClass() {
   };
   setDebtor(CL.H.BAL, 0);
   setDebtor("Status", "Reinstated");
-  setDebtor("Reinstated To", targetClass);
+  setDebtor("Reinstated To", to.getName());
   setDebtor("Reinstated At", now);
   setDebtor("Updated At", now);
 
-  _toast_(`Restored ${nameInput} to ${targetClass}.`, "Leavers – Debtors", 6);
+  _toast_(`Restored ${nameInput} to ${to.getName()}.`, "Leavers – Debtors", 6);
 }
 
 function markLeaverSettled() {

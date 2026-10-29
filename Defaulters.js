@@ -132,13 +132,37 @@ function rebuildOneDefaulters(sheetName) {
   const src = ss.getSheetByName(sheetName);
   if (!src) throw new Error(`No sheet named "${sheetName}"`);
 
-  const defName = sheetName.replace(new RegExp(String(CL.CLASS_SUFFIX).replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "$"), CL.DEFS_SUFFIX);
+  // CRITICAL SAFETY:
+  // Always derive the Defaulters name from the ACTUAL source-sheet name.
+  // getSheetByName() is case-insensitive, while String.replace(RegExp) was not.
+  // Example: "SENIOR 6 LIST" previously failed to replace " list", then
+  // resolved back to the real class sheet and clearContents() wiped the class.
+  const actualSourceName = src.getName();
+  const classSuffix = String(CL.CLASS_SUFFIX || " list");
+  const defsSuffix = String(CL.DEFS_SUFFIX || " Defaulters");
+  const escapedSuffix = classSuffix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const suffixRe = new RegExp(escapedSuffix + "$", "i");
+
+  if (!suffixRe.test(actualSourceName)) {
+    throw new Error(`Refusing Defaulters rebuild: "${actualSourceName}" is not a class-list sheet.`);
+  }
+
+  const defName = actualSourceName.replace(suffixRe, defsSuffix);
+  if (_flatUpper_(defName) === _flatUpper_(actualSourceName)) {
+    throw new Error(`SAFETY STOP: Defaulters name resolved to the class sheet "${actualSourceName}".`);
+  }
+
   const def = ss.getSheetByName(defName) || ss.insertSheet(defName);
+
+  // Absolute guard: NEVER clear the source class sheet.
+  if (def.getSheetId() === src.getSheetId()) {
+    throw new Error(`SAFETY STOP: attempted to clear class sheet "${actualSourceName}" as Defaulters.`);
+  }
 
   // IMPORTANT: keep formats (especially date formats) -> do NOT use clear()
   def.clearContents();
 
-  def.getRange(1, 1).setFormula(makeDefaultersFormula_(sheetName));
+  def.getRange(1, 1).setFormula(makeDefaultersFormula_(actualSourceName));
   def.setFrozenRows(1);
 
   // Re-apply a safe date format to col A (DATE column in your layout)
