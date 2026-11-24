@@ -1,5 +1,5 @@
 /***** ===== CLASS LISTS — TERM AUTOMATION (CLASS LISTS / STRUCTURE) =====
- * v1.7-structure-hardened (NO-GREEN + SAFE student-end detection + NO formula spread)
+ * v1.8-structure-canonical-safe (NO-GREEN + SAFE student-end detection + NO formula spread)
  *
  * PERMANENT FIXES ADDED IN THIS UPDATE:
  * ✅ BALANCE formula is applied ONLY to REAL student rows (rows 2 → last student row), NOT “row before TOTALS”.
@@ -58,6 +58,54 @@ function CLS_col_(sh, canonicalHeader) {
   } catch (_) {}
 
   return null;
+}
+
+/**
+ * Normalize the core A:M class-list header layout when the sheet clearly matches
+ * the standard class schema. This repairs harmless spelling/casing damage such as
+ * "DAY/ BOARDING", blank NO. headers, etc. without guessing on unrelated sheets.
+ */
+function CLS_normalizeCoreHeaders_(sh) {
+  if (!sh || CLS_isDefaultersSheetName_(sh.getName())) return;
+
+  const desired = [
+    CL.H.NO, CL.H.DATE, CL.H.NAME, CL.H.SEX, CL.H.NAT, CL.H.DB,
+    CL.H.LTB, CL.H.FEE, CL.H.PAID, CL.H.BAL, CL.H.CAUT, CL.H.TEL, CL.H.REM,
+  ];
+
+  if (sh.getMaxColumns() < desired.length) return;
+
+  const current = sh.getRange(1, 1, 1, desired.length).getValues()[0];
+  const flat = v => String(v == null ? "" : v).replace(/\s+/g, "").toUpperCase();
+
+  // Only normalize positionally when the key financial/name anchors prove this is
+  // the expected A:M class schema.
+  const looksStandard =
+    flat(current[2]) === flat(CL.H.NAME) &&
+    flat(current[6]) === flat(CL.H.LTB) &&
+    flat(current[7]) === flat(CL.H.FEE) &&
+    flat(current[8]) === flat(CL.H.PAID) &&
+    flat(current[9]) === flat(CL.H.BAL);
+
+  if (!looksStandard) return;
+
+  sh.getRange(1, 1, 1, desired.length).setValues([desired]);
+  try { sh.setFrozenRows(1); } catch (_) {}
+}
+
+/** Renumber real students 1..N and clear serials from blank capacity rows. */
+function CLS_renumberStudents_(sh, totalsRow, cNAME, cNO) {
+  if (!sh || !cNAME || !cNO || !totalsRow || totalsRow < 3) return;
+  const nRows = totalsRow - 2;
+  const names = sh.getRange(2, cNAME, nRows, 1).getDisplayValues().flat();
+  let serial = 0;
+  const out = names.map(v => {
+    const name = CLS_norm_(v);
+    if (!name || String(name).toUpperCase().startsWith("TOTALS")) return [""];
+    serial++;
+    return [serial];
+  });
+  sh.getRange(2, cNO, nRows, 1).setValues(out);
 }
 
 /** Remove ALL conditional formatting rules from a class sheet (defaulters keep theirs). */
@@ -188,6 +236,9 @@ function ensureStructureOne_(sh) {
   // Never enforce structure on defaulters sheets
   if (CLS_isDefaultersSheetName_(sh.getName())) return;
 
+  // Repair canonical core headers first so every downstream lookup is stable.
+  CLS_normalizeCoreHeaders_(sh);
+
   // Remove conditional formatting from class sheets
   CLS_removeConditionalFormattingFromClassSheet_(sh);
 
@@ -245,6 +296,9 @@ function ensureStructureOne_(sh) {
 
   // Apply ONLY to rows 2..endRow (REAL students only)
   sh.getRange(2, cBAL, endRow - 1, 1).setFormulaR1C1(fR1C1);
+
+  // Keep class serials deterministic after moves/restores/promotions.
+  if (totalsRow) CLS_renumberStudents_(sh, totalsRow, cNAME, cNO);
 
   // Clean any spilled BALANCE formulas in blank rows up to TOTALS
   if (totalsRow) CLS_clearSpilledBalanceFormulas_(sh, cBAL, totalsRow, endRow, cNAME, cNO);
