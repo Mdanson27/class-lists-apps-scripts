@@ -310,8 +310,10 @@ function TOPS_appendRowsAboveTotals_(to, rows) {
   const writeBlock = (startRow, block) => {
     TOPS_ensureRows_(to, startRow + block.length - 1);
     const rng = to.getRange(startRow, 1, block.length, lastCol);
+    // Write values into the existing class capacity rows WITHOUT clearing their
+    // formatting or data validation. Those rows are deliberately preserved
+    // across terms for exactly this purpose.
     rng.setValues(block);
-    try { rng.clearFormat(); } catch (_) {}
   };
 
   // Non-class/system sheets such as Leavers do not have TOTALS: append normally.
