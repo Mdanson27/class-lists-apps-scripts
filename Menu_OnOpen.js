@@ -26,7 +26,6 @@ function onOpen(e) {
     .addItem("Rebuild all Defaulters sheets", "rebuildAllDefaulters_QUERY")
     .addSeparator()
     .addItem("Fix totals (Expected/Paid/Balance)", "fixTotalsAllSheets")
-    .addItem("Fix totals — use fixed positions", "fixTotals_UseFixedPositions")
     .addSeparator()
     .addItem("Refresh SUMMARIES (Totals + Debtors + Headcounts)", "refreshSummaries")
     .addSeparator()
