@@ -1,13 +1,13 @@
 /***** ===== LEAVERS / DEBTORS (capture + restore + sheet layout) =====
- * v2.1-fixed-totals-no-row-shift
+ * v2.2-transactional-one-place-moves
  *
- * CRITICAL POLICY FOR YOUR “FIXED TOTALS ROW” SYSTEM:
+ * CRITICAL MOVE / TOTALS POLICY:
  * ✅ We DO NOT delete student rows from class lists.
  * ✅ We DO NOT insert rows above TOTALS.
  * ✅ “Remove student” = clear the student’s row content (row stays).
  * ✅ “Restore student” = fill the first EMPTY student row above TOTALS.
  *
- * This guarantees your TOTALS rows stay EXACTLY at the fixed positions you provided.
+ * This keeps the live TOTALS row and class grid structure intact.
  *
  * RUN FROM EDITOR:
  *  ✅ prepareLeaversDebtorsSheetSafe()        -> keeps ALL existing data, fixes layout + formatting
@@ -15,42 +15,13 @@
  *  ✅ rebuildLeaversDebtorsSheetClearOnly()   -> clears all data in-place + rebuilds headers/format (WIPES ALL DATA)
  ************************************************************/
 
-/** ==================== SETTINGS ==================== */
-/**
- * Restoration policy:
- * Restoring a student is a MOVE, never a copy. After the class write is
- * verified, the matching row is deleted from Leavers – Debtors.
- */
-const LEAVERS_RESTORE_BEHAVIOR = "DELETE";
-
-/**
- * FIXED TOTALS ROWS (AUTHORITATIVE)
- * These are the exact totals row positions you provided.
- * Sorting/renumbering (nightly) and row-safe operations should respect these.
- */
-const CLASS_TOTALS_ROWS = {
-  // Nursery
-  "Baby class list": 36,
-  "Middle class list": 42,
-  "Top Class list": 47,
-
-  // Primary
-  "Primary 1 list": 45,
-  "Primary 2 list": 51,
-  "Primary 3 list": 58,
-  "Primary 4 list": 48,
-  "Primary 5 list": 49,
-  "Primary 6 list": 50,
-  "Primary 7 list": 64,
-
-  // Secondary
-  "Senior 1 list": 74,
-  "Senior 2 list": 107,
-  "Senior 3 list": 91,
-  "Senior 4 list": 113,
-  "Senior 5 list": 86,
-  "Senior 6 list": 97,
-};
+/** ==================== MOVE POLICY ====================
+ * A student may exist in exactly ONE active location:
+ *   class list OR Leavers – Debtors.
+ * Class-list rows are never physically deleted; only their student content is cleared.
+ * Leavers rows ARE deleted after a verified restore because that operation is a true move.
+ * TOTALS rows are always discovered from the live "TOTALS" label.
+ ************************************************************/
 
 /** ==================== SAFE LOCAL WRAPPERS (no hard dependency on Utils.gs) ==================== */
 function _ss_() { return SpreadsheetApp.getActive(); }
@@ -489,6 +460,19 @@ function _clearStudentRowSafely_(sh, row) {
   rng.setValues(values);
 }
 
+/** Restore one class row exactly after a failed transactional move. */
+function _restoreStudentRowSnapshot_(sh, row, values, formulas) {
+  if (!sh || !row || !values || !values.length) return;
+  const width = values[0].length;
+  const rng = sh.getRange(row, 1, 1, width);
+  rng.setValues(values);
+  if (formulas && formulas[0]) {
+    for (let c = 0; c < formulas[0].length; c++) {
+      if (formulas[0][c]) sh.getRange(row, c + 1).setFormula(formulas[0][c]);
+    }
+  }
+}
+
 /** ==================== ACTIONS: Record / Restore / Settle ==================== */
 function recordLeaverQuick() {
   const ui = SpreadsheetApp.getUi();
@@ -521,25 +505,25 @@ function recordLeaverQuick() {
   _ensureStructureOneSafe_(src);
 
   const tRow = _totalsRowForClass_(src);
-  if (!tRow) return ui.alert(`Totals row not found for "${className}". Add it to CLASS_TOTALS_ROWS or place a TOTALS label.`);
+  if (!tRow) return ui.alert(`TOTALS row not found for "${src.getName()}". Restore the live TOTALS label before moving a student.`);
 
   const srcMap = _getHeaderIndexMap_(src);
-  if (!srcMap[CL.H.NAME]) return ui.alert("Missing 'Student Name' header on class sheet.");
+  const cName = srcMap[CL.H.NAME];
+  if (!cName) return ui.alert("Missing 'Student Name' header on class sheet.");
 
   const endRow = tRow - 1;
-  if (endRow < 2) return ui.alert("No student rows found (above TOTALS).");
+  if (endRow < 2) return ui.alert("No student rows found above TOTALS.");
 
   const lastCol = src.getLastColumn();
   const rows = src.getRange(2, 1, endRow - 1, lastCol).getValues();
 
   const nameU = _flatUpper_(name);
-  const idx = rows.findIndex(r => _flatUpper_(r[srcMap[CL.H.NAME] - 1]) === nameU);
-  if (idx === -1) return ui.alert(`"${name}" not found in ${className} (above TOTALS).`);
+  const idx = rows.findIndex(r => _flatUpper_(r[cName - 1]) === nameU);
+  if (idx === -1) return ui.alert(`"${name}" not found in ${src.getName()} above TOTALS.`);
 
   const absRow = 2 + idx;
-  if (absRow >= tRow) return ui.alert("Safety stop: matched row appears at/under TOTALS. No removal performed.");
+  if (absRow >= tRow) return ui.alert("Safety stop: matched row appears at/under TOTALS.");
 
-  // Prepare debtor record
   const ctx = _getDebtorsCtx_();
   const colName = ctx.map[_flatUpper_(CL.H.NAME)];
   const colFormer = ctx.map[_flatUpper_("Former Class")];
@@ -548,10 +532,10 @@ function recordLeaverQuick() {
   if (colName && colFormer && colStatus) {
     const clash = ctx.rows.some(r =>
       _flatUpper_(r[colName - 1]) === nameU &&
-      _flatUpper_(r[colFormer - 1]) === _flatUpper_(className) &&
+      _flatUpper_(r[colFormer - 1]) === _flatUpper_(src.getName()) &&
       !["SETTLED", "REINSTATED"].includes(_flatUpper_(r[colStatus - 1]))
     );
-    if (clash) return ui.alert("An unsettled debtor with the same name and class already exists.");
+    if (clash) return ui.alert("Move stopped: this student already has an active Leavers/Debtors record.");
   }
 
   const out = new Array(ctx.lastCol).fill("");
@@ -564,8 +548,8 @@ function recordLeaverQuick() {
   const now = nowStamp_();
   const studentId = Utilities.getUuid();
   const set = (h, v) => { const c = ctx.map[_flatUpper_(h)]; if (c) out[c - 1] = v; };
-
   const actualClassName = src.getName();
+
   set("Former Class", actualClassName);
   set("Date Left", dateLeft);
   set("Exit Reason", exitReason || "");
@@ -578,16 +562,57 @@ function recordLeaverQuick() {
   set("Updated At", now);
   set("Student ID", studentId);
 
-  ctx.sh.appendRow(out);
+  // Snapshot source row for rollback before changing either location.
+  const sourceRange = src.getRange(absRow, 1, 1, lastCol);
+  const snapshotValues = sourceRange.getValues();
+  const snapshotFormulas = sourceRange.getFormulas();
 
-  const go = ui.alert("Remove from class list?", `Clear "${name}" from "${className}" now?\n\n(ROW WILL NOT BE DELETED — totals row stays fixed)`, ui.ButtonSet.YES_NO);
-  if (go === ui.Button.YES) {
+  let debtorRow = null;
+  try {
+    // 1) Write and verify destination debtor record.
+    ctx.sh.appendRow(out);
+    debtorRow = ctx.sh.getLastRow();
+    SpreadsheetApp.flush();
+
+    const idCol = ctx.map[_flatUpper_("Student ID")];
+    const liveId = idCol ? _norm_(ctx.sh.getRange(debtorRow, idCol).getDisplayValue()) : "";
+    if (idCol && liveId !== studentId) throw new Error("Could not verify the new debtor record.");
+
+    // 2) Clear ONLY this student's source content; never delete the class row.
     _clearStudentRowSafely_(src, absRow);
-    // Always pass the canonical live sheet name; never a user-typed casing variant.
-    _rebuildOneDefaultersSafe_(src.getName());
+    SpreadsheetApp.flush();
+    if (_flatUpper_(src.getRange(absRow, cName).getDisplayValue()) === nameU) {
+      throw new Error("Could not verify removal from the class list.");
+    }
+
+    // 3) Repair class formulas/serials and its Defaulters sheet before committing.
+    if (typeof ensureStructureOne_ === "function") ensureStructureOne_(src);
+    if (typeof rebuildOneDefaulters === "function") rebuildOneDefaulters(src.getName());
+
+  } catch (err) {
+    // Roll back both locations so the student cannot be stranded or duplicated.
+    try { _restoreStudentRowSnapshot_(src, absRow, snapshotValues, snapshotFormulas); } catch (_) {}
+    try {
+      if (debtorRow && debtorRow <= ctx.sh.getLastRow()) {
+        const idCol = ctx.map[_flatUpper_("Student ID")];
+        const liveId = idCol ? _norm_(ctx.sh.getRange(debtorRow, idCol).getDisplayValue()) : "";
+        if (!idCol || liveId === studentId) ctx.sh.deleteRow(debtorRow);
+      }
+    } catch (_) {}
+    try { if (typeof ensureStructureOne_ === "function") ensureStructureOne_(src); } catch (_) {}
+    try { if (typeof rebuildOneDefaulters === "function") rebuildOneDefaulters(src.getName()); } catch (_) {}
+    SpreadsheetApp.flush();
+    return ui.alert(
+      `Move stopped and rolled back. ${name} remains in ${src.getName()} only.\n\n` +
+      `${err && err.message ? err.message : err}`
+    );
   }
 
-  _toast_(`Leaver recorded: ${name}`, "Leavers – Debtors", 6);
+  // Keep dependent reports current only after the move is fully committed.
+  try { if (typeof rebuildLeaversByClassReport === "function") rebuildLeaversByClassReport(); } catch (_) {}
+  try { if (typeof refreshSummaries === "function") refreshSummaries(); } catch (_) {}
+
+  _toast_(`Moved ${name} from ${src.getName()} to Leavers – Debtors.`, "Leavers – Debtors", 6);
 }
 
 function restoreLeaverToClass() {
@@ -653,7 +678,21 @@ function restoreLeaverToClass() {
   _ensureStructureOneSafe_(to);
 
   const tRow = _totalsRowForClass_(to);
-  if (!tRow) return ui.alert(`Totals row not found for "${targetClass}". Add it to CLASS_TOTALS_ROWS or place a TOTALS label.`);
+  if (!tRow) return ui.alert(`TOTALS row not found for "${to.getName()}". Restore the live TOTALS label before moving a student.`);
+
+  // One-place-only guard: never restore a debtor into a class where that
+  // student already exists.
+  const targetMap = _getHeaderIndexMap_(to);
+  const targetNameCol = targetMap[CL.H.NAME];
+  if (!targetNameCol) return ui.alert(`Missing "${CL.H.NAME}" header in ${to.getName()}.`);
+  const targetNames = to.getRange(2, targetNameCol, tRow - 2, 1).getDisplayValues().flat();
+  const existingOffset = targetNames.findIndex(v => _flatUpper_(v) === nameU);
+  if (existingOffset !== -1) {
+    return ui.alert(
+      `Restore stopped: ${nameInput} already exists in ${to.getName()} (row ${existingOffset + 2}).\n\n` +
+      `The debtor record was kept so no balance is lost. Reconcile that existing class row first.`
+    );
+  }
 
   // Find first available empty row above totals (NO inserts)
   const writeRow = _firstEmptyStudentRow_(to);
@@ -661,7 +700,7 @@ function restoreLeaverToClass() {
     return ui.alert(
       `No empty student row available above TOTALS in "${targetClass}".\n\n` +
       `Because totals rows are fixed, we cannot insert rows above TOTALS.\n` +
-      `Clear an empty line (remove a student) or increase capacity by moving TOTALS lower and updating CLASS_TOTALS_ROWS.`
+      `Move the TOTALS row lower manually to create more student capacity, then retry.`
     );
   }
 
@@ -724,6 +763,18 @@ if (writtenName !== nameU) {
   return ui.alert(
     `Restore stopped: ${nameInput} could not be verified in ${to.getName()}.\n\n` +
     `The Leavers – Debtors record was NOT removed.`
+  );
+}
+
+// Reapply the class BALANCE formula + serial numbering before Defaulters reads it.
+try {
+  if (typeof ensureStructureOne_ === "function") ensureStructureOne_(to);
+} catch (err) {
+  _clearStudentRowSafely_(to, writeRow);
+  SpreadsheetApp.flush();
+  return ui.alert(
+    `Restore stopped because the target class structure could not be repaired.\n\n` +
+    `${err && err.message ? err.message : err}\n\nThe debtor record was kept.`
   );
 }
 
@@ -796,6 +847,7 @@ try {
     rebuildLeaversByClassReport();
   }
 } catch (_) {}
+try { if (typeof refreshSummaries === "function") refreshSummaries(); } catch (_) {}
 
 _toast_(
   `Restored ${nameInput} to ${to.getName()} and removed the Debtors record.`,
@@ -834,6 +886,8 @@ function markLeaverSettled() {
   if (colStatus) ctx.sh.getRange(row, colStatus).setValue("Settled");
   if (colUpdated) ctx.sh.getRange(row, colUpdated).setValue(now);
 
+  try { if (typeof rebuildLeaversByClassReport === "function") rebuildLeaversByClassReport(); } catch (_) {}
+  try { if (typeof refreshSummaries === "function") refreshSummaries(); } catch (_) {}
   _toast_("Marked as settled.", "Leavers – Debtors", 4);
 }
 
