@@ -5,9 +5,9 @@
  * ✅ getClassSheets_() is now DETERMINISTIC:
  *    - Uses CL.CLASS_ORDER ONLY (no dangerous fallback that includes other sheets).
  *    - Optional strict fallback: only sheets ending with CL.CLASS_SUFFIX (still excludes system/defaulters).
- * ✅ Totals detection is safer:
- *    - Prefers CL.FIXED_TOTALS[sheetName].row when available
- *    - Otherwise scans for "TOTALS" (fast col A, then wide scan up to 12 cols)
+ * ✅ Totals detection is live-label based:
+ *    - Never trusts stale configured row numbers
+ *    - Scans for the actual "TOTALS" label (col A, then wide scan up to 12 cols)
  * ✅ Header mapping helpers added:
  *    - getHeaderIndexMap_() keeps exact keys (backwards compatible)
  *    - getHeaderIndexMapUpper_() provides case-insensitive matching when needed
@@ -131,11 +131,35 @@ function getHeaderIndexMap_(sh) {
   const headers = sh.getRange(1, 1, 1, lastCol).getValues()[0];
 
   const map = {};
+  const upperToCol = {};
   for (let c = 0; c < headers.length; c++) {
     const h = _normText_(headers[c]);
     if (!h) continue;
     if (map[h] == null) map[h] = c + 1;
+    const k = _flatUpper_(h);
+    if (k && upperToCol[k] == null) upperToCol[k] = c + 1;
   }
+
+  // Also expose canonical CL.H keys when the live header uses an accepted alias.
+  // This keeps legacy callers like map[CL.H.FEE] safe without forcing every module
+  // to duplicate alias logic.
+  try {
+    const H = CL?.H || {};
+    const A = CL?.H_ALIASES || {};
+    Object.keys(H).forEach(key => {
+      const canonical = H[key];
+      if (!canonical || map[canonical]) return;
+      const candidates = [canonical].concat(Array.isArray(A[key]) ? A[key] : []);
+      for (const candidate of candidates) {
+        const col = upperToCol[_flatUpper_(candidate)];
+        if (col) {
+          map[canonical] = col;
+          break;
+        }
+      }
+    });
+  } catch (_) {}
+
   return map;
 }
 
