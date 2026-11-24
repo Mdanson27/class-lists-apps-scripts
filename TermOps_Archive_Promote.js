@@ -798,6 +798,49 @@ function TOPS_step3_Promote_(st) {
   const gradSheet = TOPS_ensureGraduatesSheet_();
   const leavers = TOPS_ensureLeaversSheet_();
 
+  // PRE-FLIGHT BEFORE ANY MOVE:
+  // every destination class must exist, have a live TOTALS row, and have enough
+  // student capacity for the class that will be promoted into it. This prevents
+  // a partially completed New Year if a later destination is too small.
+  for (let i = 0; i < classOrder.length - 1; i++) {
+    const fromName = String(classOrder[i]);
+    const toName = String(classOrder[i + 1]);
+    const from = ss.getSheetByName(fromName);
+    const to = ss.getSheetByName(toName);
+    if (!from) throw new Error(`Promotion preflight: missing source class "${fromName}".`);
+    if (!to) throw new Error(`Promotion preflight: missing destination class "${toName}".`);
+
+    try { if (typeof ensureStructureOne_ === "function") ensureStructureOne_(from); } catch (_) {}
+    try { if (typeof ensureStructureOne_ === "function") ensureStructureOne_(to); } catch (_) {}
+
+    const fromMap = TOPS_getHeaderIndexMap_(from);
+    const fromUpper = TOPS_headerMapUpper_(from);
+    const cNAME = fromMap[CL.H.NAME] || fromUpper[TOPS_flatUpper_(CL.H.NAME)];
+    if (!cNAME) throw new Error(`Promotion preflight: "${fromName}" is missing "${CL.H.NAME}".`);
+
+    const fromRegion = TOPS_getStudentRegion_(from);
+    const toRegion = TOPS_getStudentRegion_(to);
+    if (!fromRegion || !fromRegion.totalsRow) throw new Error(`Promotion preflight: TOTALS not found in "${fromName}".`);
+    if (!toRegion || !toRegion.totalsRow) throw new Error(`Promotion preflight: TOTALS not found in "${toName}".`);
+
+    const sourceRows = Math.max(0, fromRegion.totalsRow - 2);
+    const sourceNames = sourceRows
+      ? from.getRange(2, cNAME, sourceRows, 1).getDisplayValues().flat()
+      : [];
+    const studentCount = sourceNames.filter(v => {
+      const n = TOPS_norm_(v);
+      return n && !TOPS_flatUpper_(n).startsWith("TOTALS");
+    }).length;
+
+    const destinationCapacity = Math.max(0, toRegion.totalsRow - 2);
+    if (studentCount > destinationCapacity) {
+      throw new Error(
+        `Promotion preflight: "${toName}" has capacity ${destinationCapacity}, but "${fromName}" has ${studentCount} students. ` +
+        `Move the TOTALS row lower before starting the New Year. No students were moved.`
+      );
+    }
+  }
+
   // Work downward: Senior6 -> ... -> Baby
   let promotedTotal = 0;
 
