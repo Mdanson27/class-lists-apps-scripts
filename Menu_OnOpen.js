@@ -20,6 +20,8 @@ function onOpen(e) {
 
   // ===== Main menu =====
   ui.createMenu("CLASS LISTS — TERM")
+    .addItem("SAFE Repair / Rebuild Everything", "repairClassListsNow")
+    .addSeparator()
     .addItem('Ensure "LAST TERM BALANCE" + Balance formulas', "ensureStructureAll")
     .addItem("Rebuild all Defaulters sheets", "rebuildAllDefaulters_QUERY")
     .addSeparator()
@@ -131,4 +133,37 @@ function prepareLeaversDebtorsSheet_() {
     if (cPAID) sh.getRange(2, cPAID, lastRow - 1, 1).setNumberFormat(fmt);
     if (cBAL)  sh.getRange(2, cBAL,  lastRow - 1, 1).setNumberFormat(fmt);
   } catch (_) {}
+}
+
+
+/**
+ * Safe one-click maintenance pass.
+ * No class-list rows are deleted or inserted. It normalizes class structure,
+ * rewrites live TOTALS formulas, rebuilds Defaulters and refreshes reports.
+ */
+function repairClassListsNow() {
+  const run = () => {
+    if (typeof ensureStructureAll === "function") ensureStructureAll();
+    if (typeof fixTotalsAllSheets === "function") {
+      fixTotalsAllSheets({ force: true, enforceNoGreen: false, cleanupMisplaced: true });
+    }
+    if (typeof fixTotalsFormattingAll_ === "function") {
+      fixTotalsFormattingAll_({ force: true, enforceNoGreen: true, trimBelowTotals: false });
+    }
+    if (typeof rebuildAllDefaulters_QUERY === "function") rebuildAllDefaulters_QUERY();
+    if (typeof prepareLeaversDebtorsSheetSafe === "function") prepareLeaversDebtorsSheetSafe();
+    if (typeof rebuildLeaversByClassReport === "function") rebuildLeaversByClassReport();
+    if (typeof refreshSummaries === "function") refreshSummaries();
+
+    try {
+      SpreadsheetApp.getActive().toast(
+        "Safe repair complete: classes, totals, Defaulters and reports refreshed.",
+        "CLASS LISTS",
+        8
+      );
+    } catch (_) {}
+  };
+
+  if (typeof withDocLock_ === "function") return withDocLock_(run);
+  return run();
 }
