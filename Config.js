@@ -9,7 +9,7 @@
  ********************************************************/
 
 const CL = {
-  VERSION: "v1.5-config-hardened-names-aliases",
+  VERSION: "v1.6-live-totals-safe-transfers",
 
   /* =========================
    * Sheet naming rules
@@ -78,7 +78,7 @@ const CL = {
     BAL: ["BALANCE", "Balance"],
     DATE: ["Date of Admission", "Admission Date", "Date"],
     NAME: ["Student Name", "Name"],
-    DB: ["DAY/BOARDING", "DAY / BOARDING", "Boarding", "Day/Boarding"],
+    DB: ["DAY/BOARDING", "DAY / BOARDING", "DAY/ BOARDING", "DAY/    BOARDING", "DAY BOARDING", "DAY BOARDIN", "Boarding", "Day/Boarding"],
     NAT: ["NATIONALITY", "Nationality"],
     SEX: ["SEX", "Sex", "Gender"],
     NO: ["NO.", "NO", "No."],
@@ -138,6 +138,17 @@ const CL = {
   },
 
   /* =========================
+   * Totals policy
+   * ========================= */
+  TOTALS: {
+    LABEL_TEXT: "TOTALS",
+    // Live TOTALS labels are authoritative. Never trust historical row numbers.
+    USE_FIXED_ANCHORS: false,
+    // New-term/year workflows should always repair totals automatically.
+    AUTO_WRITE_FORMULAS: true,
+  },
+
+  /* =========================
    * General limits
    * ========================= */
   ROWS: 800,
@@ -151,32 +162,12 @@ const CL = {
   SHEETS_LOCKED: ["SUMMARIES"],
 
   /* =========================
-   * Fixed totals positions (optional layout anchor)
-   * If you stop deleting rows during promotion, these remain stable.
-   * ========================= */
-  FIXED_TOTALS: {
-    // Nursery
-    "Baby class list":   { row: 22, ltb: "G", fee: "H", paid: "I", bal: "J" },
-    "Middle class list": { row: 28, ltb: "G", fee: "H", paid: "I", bal: "J" },
-    "Top Class list":    { row: 31, ltb: "G", fee: "H", paid: "I", bal: "J" },
-
-    // Primary
-    "Primary 1 list": { row: 31, ltb: "G", fee: "H", paid: "I", bal: "J" },
-    "Primary 2 list": { row: 31, ltb: "G", fee: "H", paid: "I", bal: "J" },
-    "Primary 3 list": { row: 25, ltb: "G", fee: "H", paid: "I", bal: "J" },
-    "Primary 4 list": { row: 31, ltb: "G", fee: "H", paid: "I", bal: "J" },
-    "Primary 5 list": { row: 20, ltb: "G", fee: "H", paid: "I", bal: "J" },
-    "Primary 6 list": { row: 33, ltb: "G", fee: "H", paid: "I", bal: "J" },
-    "Primary 7 list": { row: 34, ltb: "G", fee: "H", paid: "I", bal: "J" },
-
-    // Secondary
-    "Senior 1 list": { row: 74, ltb: "G", fee: "H", paid: "I", bal: "J" },
-    "Senior 2 list": { row: 59, ltb: "G", fee: "H", paid: "I", bal: "J" },
-    "Senior 3 list": { row: 78, ltb: "G", fee: "H", paid: "I", bal: "J" },
-    "Senior 4 list": { row: 64, ltb: "G", fee: "H", paid: "I", bal: "J" },
-    "Senior 5 list": { row: 60, ltb: "G", fee: "H", paid: "I", bal: "J" },
-    "Senior 6 list": { row: 54, ltb: "G", fee: "H", paid: "I", bal: "J" },
-  },
+   * Legacy fixed totals map
+   * =========================
+   * Intentionally empty. TOTALS row positions are detected from the live
+   * "TOTALS" label so row movement/capacity changes cannot make the config stale.
+   */
+  FIXED_TOTALS: {},
 
   /* =========================
    * Promotion order (Start New Year)
