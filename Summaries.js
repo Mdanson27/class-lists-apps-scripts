@@ -1,6 +1,6 @@
 /***** ===== CLASS LISTS — TERM AUTOMATION (SUMMARIES) =====
  * SAFE SUMMARIES BUILDER
- * Correct totals cells + enrolment + grand totals
+ * Live TOTALS detection + enrolment + grand totals
  ************************************************************/
 
 /** Where the summaries output will be written */
@@ -28,36 +28,18 @@ const YELLOW_TOTAL_STYLE = {
 };
 
 /**
- * CONFIRMED TOTALS ROWS FROM YOUR SCREENSHOTS
- *
- * G = LAST TERM BALANCE / LTB
- * H = TERM BALANCE
- * I = PAID
- * J = BALANCE
+ * Resolve the TOTALS row from the live class sheet.
+ * Hard-coded row numbers are intentionally forbidden because class capacities
+ * and TOTALS positions can change between terms.
  */
-const TOTALS_CELLS = {
-  // Nursery
-  "Baby class list":   { row: 32 },
-  "Middle class list": { row: 38 },
-  "Top Class list":    { row: 34 },
-
-  // Primary
-  "Primary 1 list": { row: 37 },
-  "Primary 2 list": { row: 44 },
-  "Primary 3 list": { row: 48 },
-  "Primary 4 list": { row: 43 },
-  "Primary 5 list": { row: 44 },
-  "Primary 6 list": { row: 42 },
-  "Primary 7 list": { row: 59 },
-
-  // Secondary
-  "Senior 1 list": { row: 65 },
-  "Senior 2 list": { row: 65 },
-  "Senior 3 list": { row: 81 },
-  "Senior 4 list": { row: 64 },
-  "Senior 5 list": { row: 51 },
-  "Senior 6 list": { row: 67 },
-};
+function _liveTotalsRowForSummary_(sheetName) {
+  const sh = ss_().getSheetByName(String(sheetName));
+  if (!sh) return null;
+  try {
+    if (typeof findTotalsRowWide_ === "function") return findTotalsRowWide_(sh) || null;
+  } catch (_) {}
+  return null;
+}
 
 const SUMMARY_SECTIONS = [
   {
@@ -120,13 +102,12 @@ function clearSummariesBlock_(S) {
 }
 
 function _sumTotalsFormulaStrict_(sheetNames, colLetter) {
-  const refs = sheetNames
+  const refs = (sheetNames || [])
     .map(name => {
-      const info = TOTALS_CELLS[name];
-      if (!info || !info.row) return null;
-
+      const row = _liveTotalsRowForSummary_(name);
+      if (!row) return null;
       const safeName = String(name).replace(/'/g, "''");
-      return `'${safeName}'!${colLetter}${info.row}`;
+      return `'${safeName}'!${colLetter}${row}`;
     })
     .filter(Boolean);
 
@@ -134,13 +115,8 @@ function _sumTotalsFormulaStrict_(sheetNames, colLetter) {
 }
 
 function _sumAllTotalsFormulaStrict_(colLetter) {
-  const refs = Object.keys(TOTALS_CELLS).map(name => {
-    const info = TOTALS_CELLS[name];
-    const safeName = String(name).replace(/'/g, "''");
-    return `'${safeName}'!${colLetter}${info.row}`;
-  });
-
-  return refs.length ? `=SUM(${refs.join(",")})` : "=0";
+  const names = Array.isArray(CL?.CLASS_ORDER) ? CL.CLASS_ORDER : [];
+  return _sumTotalsFormulaStrict_(names, colLetter);
 }
 
 /** TOP MONEY TABLE */
@@ -251,18 +227,23 @@ function writeDebtorsOutstanding_(S) {
   const iBal = headers.findIndex(
     h => h.toLowerCase() === String(CL.H.BAL).toLowerCase()
   );
+  const iName = headers.findIndex(
+    h => h.toLowerCase() === String(CL.H.NAME).toLowerCase()
+  );
 
-  if (iStatus === -1 || iBal === -1) {
+  if (iStatus === -1 || iBal === -1 || iName === -1) {
     S.getRange(r, 4).setFormula("=0").setFontWeight("bold");
     return;
   }
 
   const colStatus = colLetter_(iStatus + 1);
   const colBal = colLetter_(iBal + 1);
+  const colName = colLetter_(iName + 1);
   const safeName = leaversName.replace(/'/g, "''");
 
   const formula =
     `=IFERROR(SUM(FILTER('${safeName}'!${colBal}2:${colBal},` +
+    `'${safeName}'!${colName}2:${colName}<>"",` +
     `UPPER('${safeName}'!${colStatus}2:${colStatus})<>"SETTLED",` +
     `UPPER('${safeName}'!${colStatus}2:${colStatus})<>"REINSTATED")),0)`;
 
@@ -278,14 +259,11 @@ function writeDebtorsOutstanding_(S) {
 }
 
 function _getTotalsRowForHeadcount_(sh, sheetName) {
-  const fixed = TOTALS_CELLS[sheetName] && TOTALS_CELLS[sheetName].row;
-  if (fixed) return fixed;
-
+  if (!sh) return null;
   try {
-    return findTotalsRowWide_(sh) || null;
-  } catch (_) {
-    return null;
-  }
+    if (typeof findTotalsRowWide_ === "function") return findTotalsRowWide_(sh) || null;
+  } catch (_) {}
+  return null;
 }
 
 function _countStudentsFormulaForSheet_(sheetName, sh) {
