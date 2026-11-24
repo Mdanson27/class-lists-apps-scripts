@@ -311,34 +311,92 @@ function TOPS_appendRowsAboveTotals_(to, rows) {
     TOPS_ensureRows_(to, startRow + block.length - 1);
     const rng = to.getRange(startRow, 1, block.length, lastCol);
     rng.setValues(block);
-
-    // keep inserted/filled rows neutral (no green)
     try { rng.clearFormat(); } catch (_) {}
   };
 
+  // Non-class/system sheets such as Leavers do not have TOTALS: append normally.
   if (!tRow) {
     const start = Math.max(2, to.getLastRow() + 1);
     writeBlock(start, norm);
     return;
   }
 
-  const startCandidate = TOPS_nextRowAfterLastNumberedA_(to);
-  const freeSlots = Math.max(0, tRow - startCandidate);
+  // Class sheets: NEVER insert rows before TOTALS. Use existing empty capacity only.
+  const exact = TOPS_getHeaderIndexMap_(to);
+  const upper = TOPS_headerMapUpper_(to);
+  const cNAME = exact[CL.H.NAME] || upper[TOPS_flatUpper_(CL.H.NAME)] || null;
+  const cNO = exact[CL.H.NO] || upper[TOPS_flatUpper_(CL.H.NO)] || 1;
+  const keyCol = cNAME || cNO;
 
-  if (freeSlots >= norm.length) {
-    writeBlock(startCandidate, norm);
-    return;
+  const capacityRows = tRow - 2;
+  if (capacityRows < 0) throw new Error(`"${to.getName()}" has an invalid TOTALS position.`);
+
+  const keys = capacityRows
+    ? to.getRange(2, keyCol, capacityRows, 1).getDisplayValues().flat()
+    : [];
+
+  const freeRows = [];
+  for (let i = 0; i < keys.length; i++) {
+    if (!TOPS_norm_(keys[i])) freeRows.push(2 + i);
   }
 
-  if (freeSlots > 0) {
-    writeBlock(startCandidate, norm.slice(0, freeSlots));
+  if (freeRows.length < norm.length) {
+    throw new Error(
+      `Not enough empty student rows in "${to.getName()}": need ${norm.length}, have ${freeRows.length}. ` +
+      `Move the TOTALS row lower manually before running promotion. No rows were inserted.`
+    );
   }
 
-  const remaining = norm.length - freeSlots;
-  if (remaining > 0) {
-    to.insertRowsBefore(tRow, remaining);
-    writeBlock(tRow, norm.slice(freeSlots));
+  // Group selected empty rows into consecutive blocks for efficient writes.
+  let dataIndex = 0;
+  let blockStart = null;
+  let blockRows = [];
+  let previousRow = null;
+
+  const flush = () => {
+    if (blockStart == null || !blockRows.length) return;
+    writeBlock(blockStart, blockRows);
+    blockStart = null;
+    blockRows = [];
+    previousRow = null;
+  };
+
+  for (let i = 0; i < norm.length; i++) {
+    const targetRow = freeRows[i];
+    if (blockStart == null || targetRow !== previousRow + 1) {
+      flush();
+      blockStart = targetRow;
+    }
+    blockRows.push(norm[dataIndex++]);
+    previousRow = targetRow;
   }
+  flush();
+}
+
+/** Clear only rows that actually contained moved students; never bulk-wipe capacity rows. */
+function TOPS_clearMovedStudentRows_(sh, items) {
+  if (!sh || !Array.isArray(items) || !items.length) return;
+  const rows = items
+    .map(x => Number(x && x.absRow))
+    .filter(x => Number.isFinite(x) && x >= 2)
+    .sort((a, b) => a - b);
+  if (!rows.length) return;
+
+  const lastCol = Math.max(1, sh.getLastColumn());
+  let start = rows[0], prev = rows[0];
+
+  const clearBlock = (s, e) => sh.getRange(s, 1, e - s + 1, lastCol).clearContent();
+
+  for (let i = 1; i < rows.length; i++) {
+    const r = rows[i];
+    if (r === prev + 1) {
+      prev = r;
+      continue;
+    }
+    clearBlock(start, prev);
+    start = prev = r;
+  }
+  clearBlock(start, prev);
 }
 
 /* =========================
@@ -755,7 +813,20 @@ function TOPS_step3_Promote_(st) {
     if (!endRow || endRow < 2) continue;
 
     const num = endRow - 1;
-    const data = from.getRange(2, 1, num, from.getLastColumn()).getValues();
+    const rawData = from.getRange(2, 1, num, from.getLastColumn()).getValues();
+    const fromExact = TOPS_getHeaderIndexMap_(from);
+    const fromUpper = TOPS_headerMapUpper_(from);
+    const cNAME = fromExact[CL.H.NAME] || fromUpper[TOPS_flatUpper_(CL.H.NAME)];
+    if (!cNAME) throw new Error(`"${fromName}" missing "${CL.H.NAME}" header.`);
+
+    // IMPORTANT: only real students move. Blank capacity rows above TOTALS are ignored.
+    const data = [];
+    rawData.forEach((row, idx) => {
+      const nm = TOPS_norm_(row[cNAME - 1]);
+      if (!nm || TOPS_flatUpper_(nm).startsWith("TOTALS")) return;
+      data.push({ row, absRow: 2 + idx });
+    });
+    if (!data.length) continue;
 
     // Senior 6: split debtors/graduates
     if (i === classOrder.length - 1) {
@@ -767,10 +838,10 @@ function TOPS_step3_Promote_(st) {
       const debtors = [];
       const cleared = [];
 
-      data.forEach((r, idx) => {
+      data.forEach(item => {
+        const r = item.row;
         const bal = Number(r[cBAL - 1]) || 0;
-        const absRow = 2 + idx;
-        if (bal > 0) debtors.push({ row: r, absRow });
+        if (bal > 0) debtors.push(item);
         else cleared.push(r);
       });
 
@@ -847,9 +918,7 @@ function TOPS_step3_Promote_(st) {
       // SAFE MOVE: clear student contents only. NEVER delete class-list rows.
       // The students have already been copied to Leavers/Graduates above.
       // clearContent() preserves the physical row structure, formatting and TOTALS position.
-      if (num > 0) {
-        from.getRange(2, 1, num, from.getLastColumn()).clearContent();
-      }
+      TOPS_clearMovedStudentRows_(from, data);
 
       promotedTotal += data.length;
       st.stats.promoted = (st.stats.promoted || 0) + data.length;
@@ -863,16 +932,14 @@ function TOPS_step3_Promote_(st) {
 
     try { if (typeof ensureStructureOne_ === "function") ensureStructureOne_(to); } catch (_) {}
 
-    let mapped = TOPS_mapRowsByHeaders_(from, to, data);
+    let mapped = TOPS_mapRowsByHeaders_(from, to, data.map(item => item.row));
     mapped = TOPS_forceDestFee_(to, mapped);
 
     TOPS_appendRowsAboveTotals_(to, mapped);
 
     // SAFE MOVE: clear source student contents only. NEVER delete class-list rows.
     // Students were copied to the destination class above.
-    if (num > 0) {
-      from.getRange(2, 1, num, from.getLastColumn()).clearContent();
-    }
+    TOPS_clearMovedStudentRows_(from, data);
 
     promotedTotal += data.length;
     st.stats.promoted = (st.stats.promoted || 0) + data.length;
@@ -949,10 +1016,14 @@ function TOPS_step5_HeavyFixes_(st) {
   // Defaulters rebuild
   if (typeof rebuildAllDefaulters_QUERY === "function") rebuildAllDefaulters_QUERY();
 
+  // Rebuild dependent reports from the now-final class/debtor data.
+  if (typeof refreshSummaries === "function") refreshSummaries();
+  if (typeof rebuildLeaversByClassReport === "function") rebuildLeaversByClassReport();
+
   // Optional: apply workbook layout formatting (safe) if you want it here
   // if (typeof formatWorkbookLayout === "function") formatWorkbookLayout();
 
-  TOPS_toast_("Step 5 complete: Totals + No-green + Defaulters.", "Step 5", 10);
+  TOPS_toast_("Step 5 complete: Structure + Totals + Defaulters + Reports.", "Step 5", 10);
 }
 
 /* =========================
